@@ -1,0 +1,50 @@
+name: Create Videos
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-videos:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python packages
+        run: |
+          pip install pillow google-api-python-client google-auth
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Create work directories
+        run: |
+          mkdir -p work/source
+          mkdir -p work/output
+
+      - name: Download source images
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          python scripts/download_from_drive.py
+
+      - name: Create videos
+        run: |
+          python video/create_video.py
+
+      - name: Upload videos to Drive
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          python scripts/upload_to_drive.py
