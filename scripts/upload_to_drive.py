@@ -1,49 +1,19 @@
+import base64
 import json
 import os
 from pathlib import Path
 
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
-
-
-SCOPES = [
-    "https://www.googleapis.com/auth/drive",
-    "https://www.googleapis.com/auth/spreadsheets",
-]
-
-
-def get_credentials():
-    credentials_json = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
-
-    return service_account.Credentials.from_service_account_info(
-        json.loads(credentials_json),
-        scopes=SCOPES,
-    )
+import requests
 
 
 def main():
 
-    credentials = get_credentials()
-
-    drive = build(
-        "drive",
-        "v3",
-        credentials=credentials,
-    )
-
-    sheets = build(
-        "sheets",
-        "v4",
-        credentials=credentials,
-    )
-
-    spreadsheet_id = os.environ[
-        "CONTENT_SPREADSHEET_ID"
+    upload_url = os.environ[
+        "VIDEO_UPLOAD_URL"
     ]
 
-    video_folder_id = os.environ[
-        "VIDEO_FOLDER_ID"
+    upload_token = os.environ[
+        "VIDEO_UPLOAD_TOKEN"
     ]
 
     manifest_path = Path(
@@ -61,18 +31,24 @@ def main():
         )
     )
 
+    if not manifest:
+        print(
+            "No videos to upload."
+        )
+        return
+
     for item in manifest:
 
         content_id = item["content_id"]
-        row_number = item["row_number"]
 
         source_file = Path(
             item["source_file"]
         )
 
-        video_file = Path(
-            "work/output"
-        ) / f"{source_file.stem}.mp4"
+        video_file = (
+            Path("work/output") /
+            f"{source_file.stem}.mp4"
+        )
 
         if not video_file.exists():
             raise RuntimeError(
@@ -80,63 +56,56 @@ def main():
             )
 
         print(
-            f"Uploading video for {content_id}"
+            f"Uploading {video_file.name}"
         )
 
-        metadata = {
-            "name": video_file.name,
-            "parents": [video_folder_id],
+        file_bytes = video_file.read_bytes()
+
+        encoded_file = base64.b64encode(
+            file_bytes
+        ).decode("ascii")
+
+        payload = {
+            "token": upload_token,
+            "contentId": content_id,
+            "fileName": video_file.name,
+            "folderId": os.environ[
+                "VIDEO_FOLDER_ID"
+            ],
+            "fileData": encoded_file,
         }
 
-        media = MediaFileUpload(
-            str(video_file),
-            mimetype="video/mp4",
-            resumable=True,
+        response = requests.post(
+            upload_url,
+            json=payload,
+            timeout=300
         )
-
-        uploaded = drive.files().create(
-            body=metadata,
-            media_body=media,
-            fields="id,name,webViewLink",
-            supportsAllDrives=True,
-        ).execute()
-
-        video_id = uploaded["id"]
-
-        video_url = (
-            uploaded.get("webViewLink")
-            or f"https://drive.google.com/file/d/{video_id}/view"
-        )
-
-        # I = VIDEO FILE
-        sheets.spreadsheets().values().update(
-            spreadsheetId=spreadsheet_id,
-            range=f"CONTENT!I{row_number}",
-            valueInputOption="RAW",
-            body={
-                "values": [
-                    [video_url]
-                ]
-            },
-        ).execute()
-
-        # K = STATUS
-        sheets.spreadsheets().values().update(
-            spreadsheetId=spreadsheet_id,
-            range=f"CONTENT!K{row_number}",
-            valueInputOption="RAW",
-            body={
-                "values": [
-                    ["VIDEO_CREATED"]
-                ]
-            },
-        ).execute()
 
         print(
-            f"Completed {content_id}"
+            "Apps Script response:",
+            response.text
         )
 
-    print("Upload and sheet update complete.")
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Upload failed with HTTP "
+                f"{response.status_code}"
+            )
+
+        result = response.json()
+
+        if not result.get("success"):
+            raise RuntimeError(
+                result.get(
+                    "error",
+                    "Unknown upload error"
+                )
+            )
+
+        print(
+            f"Uploaded {content_id}: "
+            f"{result['fileUrl']}"
+        )
 
 
 if __name__ == "__main__":
