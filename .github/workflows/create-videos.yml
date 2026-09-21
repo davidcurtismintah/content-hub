@@ -11,6 +11,7 @@ jobs:
       contents: read
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -33,9 +34,10 @@ jobs:
           mkdir -p work/source
           mkdir -p work/output
 
-      - name: Download source images
+      - name: Download AI-ready content
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          CONTENT_SPREADSHEET_ID: ${{ secrets.CONTENT_SPREADSHEET_ID }}
         run: |
           python scripts/download_from_drive.py
 
@@ -43,8 +45,10 @@ jobs:
         run: |
           python video/create_video.py
 
-      - name: Upload videos to Drive
+      - name: Upload videos and update Content Hub
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          CONTENT_SPREADSHEET_ID: ${{ secrets.CONTENT_SPREADSHEET_ID }}
+          VIDEO_FOLDER_ID: ${{ secrets.VIDEO_FOLDER_ID }}
         run: |
           python scripts/upload_to_drive.py
