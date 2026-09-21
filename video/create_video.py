@@ -1,7 +1,7 @@
 import subprocess
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageOps
 
 
 # ============================================================
@@ -13,13 +13,92 @@ HEIGHT = 1920
 FPS = 30
 DURATION = 3
 
-# Match the positioning used in the video editor.
+# Match the user's editor positioning.
 IMAGE_ZOOM = 0.90
 IMAGE_X = 0
-IMAGE_Y = -60
+IMAGE_Y = -120
 
-# Background behind the source image.
 BACKGROUND = (0, 0, 0)
+
+
+# ============================================================
+# BRIGHT BACKGROUND DETECTION
+# ============================================================
+
+def get_background_brightness(image):
+    """
+    Estimate the background brightness by sampling the edges
+    and corners of the image.
+
+    Text-heavy screenshots normally have relatively large
+    areas of background around the text, so edge sampling
+    gives us a useful approximation without needing OCR.
+    """
+
+    image = image.convert("RGB")
+
+    width, height = image.size
+
+    sample_points = [
+        (0.02, 0.02),
+        (0.50, 0.02),
+        (0.98, 0.02),
+        (0.02, 0.50),
+        (0.98, 0.50),
+        (0.02, 0.98),
+        (0.50, 0.98),
+        (0.98, 0.98),
+    ]
+
+    brightness_values = []
+
+    for x_ratio, y_ratio in sample_points:
+        x = min(width - 1, int(width * x_ratio))
+        y = min(height - 1, int(height * y_ratio))
+
+        r, g, b = image.getpixel((x, y))
+
+        # Perceived brightness.
+        brightness = (
+            0.299 * r +
+            0.587 * g +
+            0.114 * b
+        )
+
+        brightness_values.append(brightness)
+
+    return sum(brightness_values) / len(brightness_values)
+
+
+def should_apply_gray_filter(image):
+    """
+    Return True when the image background appears too bright
+    for the white Shorts interface controls.
+    """
+
+    brightness = get_background_brightness(image)
+
+    # Bright backgrounds get the grayscale treatment.
+    return brightness >= 175
+
+
+# ============================================================
+# IMAGE FILTER
+# ============================================================
+
+def apply_gray_filter(image):
+    """
+    Convert a bright screenshot to grayscale while improving
+    contrast so text remains easy to read.
+    """
+
+    gray = ImageOps.grayscale(image)
+
+    # Slight contrast boost keeps text crisp.
+    gray = ImageEnhance.Contrast(gray).enhance(1.15)
+
+    # Convert back to RGB for video encoding.
+    return gray.convert("RGB")
 
 
 # ============================================================
@@ -27,14 +106,40 @@ BACKGROUND = (0, 0, 0)
 # ============================================================
 
 def prepare_image(source_path, output_path):
+
     image = Image.open(source_path).convert("RGB")
 
-    source_width, source_height = image.size
+    # --------------------------------------------------------
+    # Decide whether the background needs treatment.
+    # --------------------------------------------------------
+
+    brightness = get_background_brightness(image)
+
+    print(
+        f"Background brightness: {brightness:.1f}"
+    )
+
+    if should_apply_gray_filter(image):
+
+        print(
+            "Bright background detected. "
+            "Applying grayscale filter."
+        )
+
+        image = apply_gray_filter(image)
+
+    else:
+
+        print(
+            "Dark background detected. "
+            "Keeping original colors."
+        )
 
     # --------------------------------------------------------
-    # First calculate the largest size that fits the complete
-    # source image inside the 1080x1920 canvas.
+    # Fit the complete image inside the Shorts canvas.
     # --------------------------------------------------------
+
+    source_width, source_height = image.size
 
     fit_scale = min(
         WIDTH / source_width,
@@ -45,11 +150,16 @@ def prepare_image(source_path, output_path):
     fitted_height = source_height * fit_scale
 
     # --------------------------------------------------------
-    # Apply the 90% zoom.
+    # Apply 90% zoom.
     # --------------------------------------------------------
 
-    final_width = int(fitted_width * IMAGE_ZOOM)
-    final_height = int(fitted_height * IMAGE_ZOOM)
+    final_width = int(
+        fitted_width * IMAGE_ZOOM
+    )
+
+    final_height = int(
+        fitted_height * IMAGE_ZOOM
+    )
 
     image = image.resize(
         (final_width, final_height),
@@ -57,7 +167,7 @@ def prepare_image(source_path, output_path):
     )
 
     # --------------------------------------------------------
-    # Create the 1080x1920 Shorts canvas.
+    # Create Shorts canvas.
     # --------------------------------------------------------
 
     canvas = Image.new(
@@ -66,16 +176,20 @@ def prepare_image(source_path, output_path):
         BACKGROUND
     )
 
-    # --------------------------------------------------------
-    # X = 0 means horizontally centered.
-    #
-    # Y = -60 means move the image 60 pixels upward.
-    # --------------------------------------------------------
+    # X = 0 means no horizontal adjustment.
+    x = int(
+        (WIDTH - final_width) / 2
+    ) + IMAGE_X
 
-    x = int((WIDTH - final_width) / 2) + IMAGE_X
-    y = int((HEIGHT - final_height) / 2) + IMAGE_Y
+    # Y = -120 moves the image upward.
+    y = int(
+        (HEIGHT - final_height) / 2
+    ) + IMAGE_Y
 
-    canvas.paste(image, (x, y))
+    canvas.paste(
+        image,
+        (x, y)
+    )
 
     canvas.save(
         output_path,
@@ -94,36 +208,30 @@ def create_video(image_path, video_path):
         "ffmpeg",
         "-y",
 
-        # Turn the image into a video stream.
         "-loop",
         "1",
 
         "-i",
         str(image_path),
 
-        # Exact 3-second duration.
         "-t",
         str(DURATION),
 
-        # Shorts frame rate.
         "-r",
         str(FPS),
 
-        # H.264 video.
         "-c:v",
         "libx264",
 
-        # Good quality while keeping the file reasonable.
         "-preset",
         "veryfast",
+
         "-crf",
         "20",
 
-        # Required for broad compatibility.
         "-pix_fmt",
         "yuv420p",
 
-        # Helps with web/video platforms.
         "-movflags",
         "+faststart",
 
@@ -167,7 +275,8 @@ def main():
         file
         for file in source_dir.iterdir()
         if file.is_file()
-        and file.suffix.lower() in supported_extensions
+        and file.suffix.lower()
+        in supported_extensions
     ]
 
     if not images:
@@ -187,7 +296,9 @@ def main():
             f"{source.stem}.mp4"
         )
 
-        print(f"Processing: {source.name}")
+        print(
+            f"Processing: {source.name}"
+        )
 
         prepare_image(
             source,
@@ -199,7 +310,6 @@ def main():
             video_file
         )
 
-        # Remove temporary prepared image.
         prepared_image.unlink()
 
         print(
