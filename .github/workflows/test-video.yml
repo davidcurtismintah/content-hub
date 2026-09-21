@@ -1,0 +1,45 @@
+name: Test Video
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-video:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Pillow
+        run: |
+          pip install pillow
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Create folders
+        run: |
+          mkdir -p work/source
+          mkdir -p work/output
+
+      - name: Copy test image
+        run: |
+          cp test/source.jpg work/source/source.jpg
+
+      - name: Create video
+        run: |
+          python video/create_video.py
+
+      - name: Upload test video
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-short
+          path: work/output/source.mp4
