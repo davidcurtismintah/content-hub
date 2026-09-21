@@ -35,12 +35,18 @@ jobs:
           cp test/dark.jpg work/source/dark.jpg
           cp test/bright.jpg work/source/bright.jpg
 
-      - name: Create video
+      - name: Create videos
         run: |
           python video/create_video.py
 
-      - name: Upload test video
+      - name: Show generated files
+        run: |
+          echo "Generated files:"
+          ls -lh work/output/
+
+      - name: Upload test videos
         uses: actions/upload-artifact@v4
         with:
-          name: test-short
-          path: work/output/source.mp4
+          name: test-shorts
+          path: work/output/*.mp4
+          if-no-files-found: error
