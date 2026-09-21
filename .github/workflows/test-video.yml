@@ -30,9 +30,10 @@ jobs:
           mkdir -p work/source
           mkdir -p work/output
 
-      - name: Copy test image
+      - name: Copy test images
         run: |
-          cp test/source.jpg work/source/source.jpg
+          cp test/dark.jpg work/source/dark.jpg
+          cp test/bright.jpg work/source/bright.jpg
 
       - name: Create video
         run: |
