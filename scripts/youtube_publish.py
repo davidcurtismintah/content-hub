@@ -451,6 +451,13 @@ def main():
     skipped = 0
     failed = 0
 
+    max_uploads = int(
+        settings.get(
+            "YOUTUBE_MAX_UPLOADS_PER_RUN",
+            "1",
+        )
+    )
+
     for row_number, raw_row in enumerate(
         publication_values[1:],
         start=2,
@@ -634,6 +641,13 @@ def main():
             print(
                 f"Completed: {content_id}"
             )
+
+            if processed >= max_uploads:
+                print(
+                    f"Reached YouTube upload limit: "
+                    f"{max_uploads}"
+                )
+                break            
 
         except Exception as error:
             error_message = str(error)
