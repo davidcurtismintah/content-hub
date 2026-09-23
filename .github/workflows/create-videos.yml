@@ -11,7 +11,6 @@ jobs:
       contents: read
 
     steps:
-
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -22,7 +21,7 @@ jobs:
 
       - name: Install Python packages
         run: |
-          pip install pillow google-api-python-client google-auth
+          pip install pillow google-api-python-client google-auth google-auth-oauthlib requests
 
       - name: Install FFmpeg
         run: |
@@ -51,5 +50,14 @@ jobs:
           VIDEO_UPLOAD_TOKEN: ${{ secrets.VIDEO_UPLOAD_TOKEN }}
           VIDEO_FOLDER_ID: ${{ secrets.VIDEO_FOLDER_ID }}
         run: |
-          pip install requests
           python scripts/upload_to_drive.py
+
+      - name: Publish scheduled YouTube videos
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          CONTENT_SPREADSHEET_ID: ${{ secrets.CONTENT_SPREADSHEET_ID }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: |
+          python scripts/youtube_publish.py
