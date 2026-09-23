@@ -42,9 +42,7 @@ def get_youtube_service():
 
 
 def get_google_credentials():
-    credentials_json = os.environ[
-        "GOOGLE_SERVICE_ACCOUNT_JSON"
-    ]
+    credentials_json = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
 
     return service_account.Credentials.from_service_account_info(
         json.loads(credentials_json),
@@ -81,10 +79,7 @@ def get_spreadsheet_data(sheets):
         range="PUBLICATIONS!A:K",
     ).execute()
 
-    return (
-        spreadsheet_id,
-        result.get("values", []),
-    )
+    return spreadsheet_id, result.get("values", [])
 
 
 def get_settings(sheets, spreadsheet_id):
@@ -106,11 +101,7 @@ def get_settings(sheets, spreadsheet_id):
         if not key:
             continue
 
-        value = (
-            str(row[1]).strip()
-            if len(row) > 1
-            else ""
-        )
+        value = str(row[1]).strip() if len(row) > 1 else ""
 
         settings[key] = value
 
@@ -138,9 +129,7 @@ def get_content_data(sheets, spreadsheet_id):
     content = {}
 
     for row in values[1:]:
-        row = row + [""] * (
-            len(headers) - len(row)
-        )
+        row = row + [""] * (len(headers) - len(row))
 
         content_id = str(
             row[header_map["CONTENT ID"]]
@@ -153,6 +142,7 @@ def get_content_data(sheets, spreadsheet_id):
             "video_file": str(
                 row[header_map["VIDEO FILE"]]
             ).strip(),
+
             "status": str(
                 row[header_map["STATUS"]]
             ).strip(),
@@ -167,8 +157,6 @@ def extract_drive_file_id(value):
     if not value:
         return ""
 
-    # Standard Google Drive URL:
-    # https://drive.google.com/file/d/FILE_ID/view
     match = re.search(
         r"/file/d/([a-zA-Z0-9_-]+)",
         value,
@@ -177,7 +165,6 @@ def extract_drive_file_id(value):
     if match:
         return match.group(1)
 
-    # Google Drive URL containing id=FILE_ID
     match = re.search(
         r"[?&]id=([a-zA-Z0-9_-]+)",
         value,
@@ -186,7 +173,6 @@ def extract_drive_file_id(value):
     if match:
         return match.group(1)
 
-    # If the cell already contains a raw Drive ID
     if re.fullmatch(
         r"[a-zA-Z0-9_-]{10,}",
         value,
@@ -208,7 +194,8 @@ def download_video_from_drive(
     if not file_id:
         raise RuntimeError(
             "Could not extract Google Drive file ID "
-            f"from VIDEO FILE: {video_reference}"
+            "from VIDEO FILE: "
+            + video_reference
         )
 
     file_info = drive.files().get(
@@ -312,6 +299,7 @@ def upload_video(
             "description": description,
             "categoryId": category_id,
         },
+
         "status": {
             "privacyStatus": "private",
             "publishAt": publish_at,
@@ -357,6 +345,7 @@ def create_comment(
     body = {
         "snippet": {
             "videoId": video_id,
+
             "topLevelComment": {
                 "snippet": {
                     "textOriginal": comment_text
@@ -373,58 +362,128 @@ def create_comment(
     return response["id"]
 
 
-def main():
-    print("Starting YouTube publishing...")
+def repair_comments(
+    youtube,
+    sheets,
+    spreadsheet_id,
+    publication_values,
+    headers,
+    header_map,
+    standard_comment,
+):
+    repaired = 0
 
-    youtube = get_youtube_service()
+    for row_number, raw_row in enumerate(
+        publication_values[1:],
+        start=2,
+    ):
+        row = raw_row + [""] * (
+            len(headers) - len(raw_row)
+        )
 
-    sheets, drive = get_services()
+        destination_id = str(
+            row[header_map["DESTINATION ID"]]
+        ).strip()
 
-    spreadsheet_id, publication_values = (
-        get_spreadsheet_data(sheets)
-    )
+        status = str(
+            row[header_map["STATUS"]]
+        ).strip()
 
-    settings = get_settings(
-        sheets,
-        spreadsheet_id,
-    )
+        platform_post_id = str(
+            row[header_map["PLATFORM POST ID"]]
+        ).strip()
 
-    content_data = get_content_data(
-        sheets,
-        spreadsheet_id,
-    )
+        comment_id = str(
+            row[header_map["COMMENT ID"]]
+        ).strip()
 
-    if len(publication_values) < 2:
-        print("No publications found.")
-        return
+        comment_status = str(
+            row[header_map["COMMENT STATUS"]]
+        ).strip()
 
-    headers = publication_values[0]
+        if destination_id != "YT-01":
+            continue
 
-    header_map = {
-        header.strip(): index
-        for index, header in enumerate(headers)
-    }
+        if status != "UPLOADED":
+            continue
 
-    required_columns = [
-        "CONTENT ID",
-        "DESTINATION ID",
-        "DATE",
-        "TIME",
-        "TITLE",
-        "CAPTION",
-        "STATUS",
-        "PLATFORM POST ID",
-        "ERROR",
-        "COMMENT ID",
-        "COMMENT STATUS",
-    ]
+        if not platform_post_id:
+            continue
 
-    for column in required_columns:
-        if column not in header_map:
-            raise RuntimeError(
-                f"Missing PUBLICATIONS column: {column}"
+        if comment_id:
+            continue
+
+        if comment_status not in ("ERROR", ""):
+            continue
+
+        if not standard_comment:
+            continue
+
+        content_id = str(
+            row[header_map["CONTENT ID"]]
+        ).strip()
+
+        print()
+        print(
+            f"Attempting comment repair: "
+            f"{content_id}"
+        )
+
+        try:
+            new_comment_id = create_comment(
+                youtube,
+                platform_post_id,
+                standard_comment,
             )
 
+            update_publication_row(
+                sheets,
+                spreadsheet_id,
+                row_number,
+                "UPLOADED",
+                platform_post_id,
+                "",
+                new_comment_id,
+                "CREATED",
+            )
+
+            print(
+                "Comment repair successful."
+            )
+
+            repaired += 1
+
+        except Exception as error:
+            print(
+                "Comment repair failed: "
+                + str(error)
+            )
+
+            update_publication_row(
+                sheets,
+                spreadsheet_id,
+                row_number,
+                "UPLOADED",
+                platform_post_id,
+                "",
+                "",
+                "ERROR",
+            )
+
+    return repaired
+
+
+def publish_new_videos(
+    youtube,
+    sheets,
+    drive,
+    spreadsheet_id,
+    publication_values,
+    headers,
+    header_map,
+    settings,
+    content_data,
+):
     category_id = settings.get(
         "YOUTUBE_DEFAULT_CATEGORY_ID",
         "22",
@@ -440,6 +499,20 @@ def main():
         "Africa/Accra",
     )
 
+    max_uploads = int(
+        settings.get(
+            "YOUTUBE_MAX_UPLOADS_PER_RUN",
+            "1",
+        )
+    )
+
+    if max_uploads <= 0:
+        print(
+            "YouTube uploads are disabled "
+            "for this run."
+        )
+        return 0
+
     videos_dir = Path("work/youtube")
 
     videos_dir.mkdir(
@@ -448,15 +521,6 @@ def main():
     )
 
     processed = 0
-    skipped = 0
-    failed = 0
-
-    max_uploads = int(
-        settings.get(
-            "YOUTUBE_MAX_UPLOADS_PER_RUN",
-            "1",
-        )
-    )
 
     for row_number, raw_row in enumerate(
         publication_values[1:],
@@ -498,39 +562,22 @@ def main():
             row[header_map["PLATFORM POST ID"]]
         ).strip()
 
-        comment_id = str(
-            row[header_map["COMMENT ID"]]
-        ).strip()
-
-        comment_status = str(
-            row[header_map["COMMENT STATUS"]]
-        ).strip()
-
-        # Only process the YouTube destination.
         if destination_id != "YT-01":
-            skipped += 1
             continue
 
-        # Only process publications waiting to be uploaded.
         if status != "READY":
-            skipped += 1
             continue
 
-        # Never upload the same publication twice.
         if platform_post_id:
-            skipped += 1
             continue
 
         if not content_id:
-            skipped += 1
             continue
 
         if content_id not in content_data:
             print(
                 f"Content not found: {content_id}"
             )
-
-            skipped += 1
             continue
 
         video_reference = content_data[
@@ -541,8 +588,6 @@ def main():
             print(
                 f"No VIDEO FILE for {content_id}"
             )
-
-            skipped += 1
             continue
 
         try:
@@ -553,11 +598,10 @@ def main():
             )
 
             video_path = (
-                videos_dir /
-                f"{content_id}.mp4"
+                videos_dir
+                / f"{content_id}.mp4"
             )
 
-            # Download the existing MP4 from Drive.
             if not video_path.exists():
                 download_video_from_drive(
                     drive,
@@ -570,9 +614,8 @@ def main():
                 f"Preparing YouTube upload: "
                 f"{content_id}"
             )
-            print(
-                f"Title: {title}"
-            )
+
+            print(f"Title: {title}")
             print(
                 f"Publish at: {publish_at}"
             )
@@ -622,7 +665,7 @@ def main():
 
                     print(
                         "Comment creation failed: "
-                        f"{comment_error}"
+                        + str(comment_error)
                     )
 
             update_publication_row(
@@ -644,16 +687,16 @@ def main():
 
             if processed >= max_uploads:
                 print(
-                    f"Reached YouTube upload limit: "
-                    f"{max_uploads}"
+                    "Reached YouTube upload "
+                    f"limit: {max_uploads}"
                 )
-                break            
+                break
 
         except Exception as error:
             error_message = str(error)
 
             print(
-                f"YouTube publishing failed for "
+                "YouTube publishing failed for "
                 f"{content_id}: "
                 f"{error_message}"
             )
@@ -665,18 +708,110 @@ def main():
                 "YOUTUBE_ERROR",
                 "",
                 error_message,
-                comment_id,
-                comment_status,
+                "",
+                "",
             )
 
-            failed += 1
+    return processed
+
+
+def main():
+    print(
+        "Starting YouTube publishing..."
+    )
+
+    youtube = get_youtube_service()
+
+    sheets, drive = get_services()
+
+    (
+        spreadsheet_id,
+        publication_values,
+    ) = get_spreadsheet_data(sheets)
+
+    settings = get_settings(
+        sheets,
+        spreadsheet_id,
+    )
+
+    content_data = get_content_data(
+        sheets,
+        spreadsheet_id,
+    )
+
+    if len(publication_values) < 2:
+        print(
+            "No publications found."
+        )
+        return
+
+    headers = publication_values[0]
+
+    header_map = {
+        header.strip(): index
+        for index, header in enumerate(headers)
+    }
+
+    required_columns = [
+        "CONTENT ID",
+        "DESTINATION ID",
+        "DATE",
+        "TIME",
+        "TITLE",
+        "CAPTION",
+        "STATUS",
+        "PLATFORM POST ID",
+        "ERROR",
+        "COMMENT ID",
+        "COMMENT STATUS",
+    ]
+
+    for column in required_columns:
+        if column not in header_map:
+            raise RuntimeError(
+                f"Missing PUBLICATIONS column: "
+                f"{column}"
+            )
+
+    standard_comment = settings.get(
+        "YOUTUBE_STANDARD_COMMENT",
+        "",
+    )
+
+    repaired = repair_comments(
+        youtube,
+        sheets,
+        spreadsheet_id,
+        publication_values,
+        headers,
+        header_map,
+        standard_comment,
+    )
+
+    print(
+        f"Comments repaired: {repaired}"
+    )
+
+    processed = publish_new_videos(
+        youtube,
+        sheets,
+        drive,
+        spreadsheet_id,
+        publication_values,
+        headers,
+        header_map,
+        settings,
+        content_data,
+    )
 
     print()
-    print("YouTube publishing complete.")
-    print(f"Processed: {processed}")
-    print(f"Skipped: {skipped}")
-    print(f"Failed: {failed}")
+    print(
+        "YouTube publishing complete."
+    )
 
+    print(
+        f"New videos uploaded: {processed}"
+    )
 
 
 if __name__ == "__main__":
