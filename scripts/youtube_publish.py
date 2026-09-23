@@ -1,13 +1,15 @@
 import json
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 
 SCOPES = [
@@ -15,11 +17,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/youtube.force-ssl",
 ]
 
-YOUTUBE_API_SERVICE_NAME = "youtube"
-YOUTUBE_API_VERSION = "v3"
 
-
-def get_credentials():
+def get_youtube_service():
     client_id = os.environ["YOUTUBE_CLIENT_ID"]
     client_secret = os.environ["YOUTUBE_CLIENT_SECRET"]
     refresh_token = os.environ["YOUTUBE_REFRESH_TOKEN"]
@@ -35,33 +34,29 @@ def get_credentials():
 
     credentials.refresh(Request())
 
-    return credentials
-
-
-def get_youtube_service():
-    credentials = get_credentials()
-
     return build(
-        YOUTUBE_API_SERVICE_NAME,
-        YOUTUBE_API_VERSION,
+        "youtube",
+        "v3",
         credentials=credentials,
     )
 
 
-def get_spreadsheet_data():
-    from google.oauth2 import service_account
+def get_google_credentials():
+    credentials_json = os.environ[
+        "GOOGLE_SERVICE_ACCOUNT_JSON"
+    ]
 
-    credentials_json = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
-
-    credentials = (
-        service_account.Credentials.from_service_account_info(
-            json.loads(credentials_json),
-            scopes=[
-                "https://www.googleapis.com/auth/drive",
-                "https://www.googleapis.com/auth/spreadsheets",
-            ],
-        )
+    return service_account.Credentials.from_service_account_info(
+        json.loads(credentials_json),
+        scopes=[
+            "https://www.googleapis.com/auth/drive",
+            "https://www.googleapis.com/auth/spreadsheets",
+        ],
     )
+
+
+def get_services():
+    credentials = get_google_credentials()
 
     sheets = build(
         "sheets",
@@ -69,6 +64,16 @@ def get_spreadsheet_data():
         credentials=credentials,
     )
 
+    drive = build(
+        "drive",
+        "v3",
+        credentials=credentials,
+    )
+
+    return sheets, drive
+
+
+def get_spreadsheet_data(sheets):
     spreadsheet_id = os.environ["CONTENT_SPREADSHEET_ID"]
 
     result = sheets.spreadsheets().values().get(
@@ -76,7 +81,10 @@ def get_spreadsheet_data():
         range="PUBLICATIONS!A:K",
     ).execute()
 
-    return sheets, spreadsheet_id, result.get("values", [])
+    return (
+        spreadsheet_id,
+        result.get("values", []),
+    )
 
 
 def get_settings(sheets, spreadsheet_id):
@@ -98,7 +106,11 @@ def get_settings(sheets, spreadsheet_id):
         if not key:
             continue
 
-        value = str(row[1]).strip() if len(row) > 1 else ""
+        value = (
+            str(row[1]).strip()
+            if len(row) > 1
+            else ""
+        )
 
         settings[key] = value
 
@@ -126,7 +138,9 @@ def get_content_data(sheets, spreadsheet_id):
     content = {}
 
     for row in values[1:]:
-        row = row + [""] * (len(headers) - len(row))
+        row = row + [""] * (
+            len(headers) - len(row)
+        )
 
         content_id = str(
             row[header_map["CONTENT ID"]]
@@ -147,18 +161,120 @@ def get_content_data(sheets, spreadsheet_id):
     return content
 
 
+def extract_drive_file_id(value):
+    value = str(value or "").strip()
+
+    if not value:
+        return ""
+
+    # Standard Google Drive URL:
+    # https://drive.google.com/file/d/FILE_ID/view
+    match = re.search(
+        r"/file/d/([a-zA-Z0-9_-]+)",
+        value,
+    )
+
+    if match:
+        return match.group(1)
+
+    # Google Drive URL containing id=FILE_ID
+    match = re.search(
+        r"[?&]id=([a-zA-Z0-9_-]+)",
+        value,
+    )
+
+    if match:
+        return match.group(1)
+
+    # If the cell already contains a raw Drive ID
+    if re.fullmatch(
+        r"[a-zA-Z0-9_-]{10,}",
+        value,
+    ):
+        return value
+
+    return ""
+
+
+def download_video_from_drive(
+    drive,
+    video_reference,
+    output_path,
+):
+    file_id = extract_drive_file_id(
+        video_reference
+    )
+
+    if not file_id:
+        raise RuntimeError(
+            "Could not extract Google Drive file ID "
+            f"from VIDEO FILE: {video_reference}"
+        )
+
+    file_info = drive.files().get(
+        fileId=file_id,
+        fields="id,name,mimeType,size",
+        supportsAllDrives=True,
+    ).execute()
+
+    print(
+        f"Downloading video from Drive: "
+        f"{file_info['name']}"
+    )
+
+    request = drive.files().get_media(
+        fileId=file_id
+    )
+
+    with open(output_path, "wb") as output:
+        downloader = MediaIoBaseDownload(
+            output,
+            request,
+        )
+
+        done = False
+
+        while not done:
+            status, done = downloader.next_chunk()
+
+            if status:
+                progress = int(
+                    status.progress() * 100
+                )
+
+                print(
+                    f"Drive download progress: "
+                    f"{progress}%"
+                )
+
+    return output_path
+
+
 def update_publication_row(
     sheets,
     spreadsheet_id,
     row_number,
-    values,
+    status,
+    platform_post_id="",
+    error="",
+    comment_id="",
+    comment_status="",
 ):
     sheets.spreadsheets().values().update(
         spreadsheetId=spreadsheet_id,
-        range=f"PUBLICATIONS!G{row_number}:K{row_number}",
+        range=(
+            f"PUBLICATIONS!G{row_number}:K"
+            f"{row_number}"
+        ),
         valueInputOption="RAW",
         body={
-            "values": [values]
+            "values": [[
+                status,
+                platform_post_id,
+                error,
+                comment_id,
+                comment_status,
+            ]]
         },
     ).execute()
 
@@ -224,8 +340,10 @@ def upload_video(
             progress = int(
                 status.progress() * 100
             )
+
             print(
-                f"Upload progress: {progress}%"
+                f"YouTube upload progress: "
+                f"{progress}%"
             )
 
     return response
@@ -256,10 +374,14 @@ def create_comment(
 
 
 def main():
+    print("Starting YouTube publishing...")
+
     youtube = get_youtube_service()
 
-    sheets, spreadsheet_id, publication_values = (
-        get_spreadsheet_data()
+    sheets, drive = get_services()
+
+    spreadsheet_id, publication_values = (
+        get_spreadsheet_data(sheets)
     )
 
     settings = get_settings(
@@ -377,14 +499,17 @@ def main():
             row[header_map["COMMENT STATUS"]]
         ).strip()
 
+        # Only process the YouTube destination.
         if destination_id != "YT-01":
             skipped += 1
             continue
 
+        # Only process publications waiting to be uploaded.
         if status != "READY":
             skipped += 1
             continue
 
+        # Never upload the same publication twice.
         if platform_post_id:
             skipped += 1
             continue
@@ -397,40 +522,19 @@ def main():
             print(
                 f"Content not found: {content_id}"
             )
+
             skipped += 1
             continue
 
-        video_file = content_data[content_id][
-            "video_file"
-        ]
+        video_reference = content_data[
+            content_id
+        ]["video_file"]
 
-        if not video_file:
+        if not video_reference:
             print(
-                f"No video file for {content_id}"
+                f"No VIDEO FILE for {content_id}"
             )
-            skipped += 1
-            continue
 
-        video_name = Path(video_file).name
-
-        possible_paths = [
-            Path("work/output") / video_name,
-            Path("work/videos") / video_name,
-            Path(video_file),
-        ]
-
-        video_path = None
-
-        for path in possible_paths:
-            if path.exists():
-                video_path = path
-                break
-
-        if video_path is None:
-            print(
-                f"Video not found for {content_id}: "
-                f"{video_name}"
-            )
             skipped += 1
             continue
 
@@ -441,9 +545,23 @@ def main():
                 timezone_name,
             )
 
+            video_path = (
+                videos_dir /
+                f"{content_id}.mp4"
+            )
+
+            # Download the existing MP4 from Drive.
+            if not video_path.exists():
+                download_video_from_drive(
+                    drive,
+                    video_reference,
+                    video_path,
+                )
+
             print()
             print(
-                f"Uploading {content_id}"
+                f"Preparing YouTube upload: "
+                f"{content_id}"
             )
             print(
                 f"Title: {title}"
@@ -456,13 +574,7 @@ def main():
                 sheets,
                 spreadsheet_id,
                 row_number,
-                [
-                    "UPLOADING",
-                    "",
-                    "",
-                    "",
-                    "",
-                ],
+                "UPLOADING",
             )
 
             response = upload_video(
@@ -495,8 +607,7 @@ def main():
                     new_comment_status = "CREATED"
 
                     print(
-                        f"Standard comment created: "
-                        f"{new_comment_id}"
+                        "Standard comment created."
                     )
 
                 except Exception as comment_error:
@@ -511,22 +622,24 @@ def main():
                 sheets,
                 spreadsheet_id,
                 row_number,
-                [
-                    "UPLOADED",
-                    video_id,
-                    "",
-                    new_comment_id,
-                    new_comment_status,
-                ],
+                "UPLOADED",
+                video_id,
+                "",
+                new_comment_id,
+                new_comment_status,
             )
 
             processed += 1
+
+            print(
+                f"Completed: {content_id}"
+            )
 
         except Exception as error:
             error_message = str(error)
 
             print(
-                f"Publishing failed for "
+                f"YouTube publishing failed for "
                 f"{content_id}: "
                 f"{error_message}"
             )
@@ -535,13 +648,11 @@ def main():
                 sheets,
                 spreadsheet_id,
                 row_number,
-                [
-                    "YOUTUBE_ERROR",
-                    "",
-                    error_message,
-                    comment_id,
-                    comment_status,
-                ],
+                "YOUTUBE_ERROR",
+                "",
+                error_message,
+                comment_id,
+                comment_status,
             )
 
             failed += 1
