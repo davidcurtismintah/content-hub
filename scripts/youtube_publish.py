@@ -336,6 +336,37 @@ def upload_video(
 
     return response
 
+def check_youtube_channel(youtube):
+    response = youtube.channels().list(
+        part="id,snippet,status",
+        mine=True,
+    ).execute()
+
+    items = response.get("items", [])
+
+    if not items:
+        raise RuntimeError(
+            "The authorized Google account does not "
+            "have an accessible YouTube channel."
+        )
+
+    for channel in items:
+        print()
+        print("AUTHORIZED YOUTUBE CHANNEL")
+        print(
+            "Channel ID:",
+            channel.get("id"),
+        )
+        print(
+            "Channel title:",
+            channel.get("snippet", {}).get("title"),
+        )
+        print(
+            "Privacy status:",
+            channel.get("status", {}).get(
+                "privacyStatus"
+            ),
+        )
 
 def create_comment(
     youtube,
@@ -722,6 +753,8 @@ def main():
 
     youtube = get_youtube_service()
 
+    check_youtube_channel(youtube)
+    
     sheets, drive = get_services()
 
     (
