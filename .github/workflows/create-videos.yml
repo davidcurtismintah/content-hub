@@ -32,6 +32,7 @@ jobs:
         run: |
           mkdir -p work/source
           mkdir -p work/output
+          mkdir -p work/youtube
 
       - name: Download AI-ready content
         env:
@@ -40,11 +41,22 @@ jobs:
         run: |
           python scripts/download_from_drive.py
 
+      - name: Check for new videos
+        id: check_videos
+        run: |
+          if [ -f work/content_manifest.json ] && [ "$(python -c "import json; print(len(json.load(open('work/content_manifest.json'))))")" -gt 0 ]; then
+            echo "has_new_videos=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_new_videos=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create videos
+        if: steps.check_videos.outputs.has_new_videos == 'true'
         run: |
           python video/create_video.py
 
-      - name: Upload videos to Google Drive
+      - name: Upload newly created videos to Google Drive
+        if: steps.check_videos.outputs.has_new_videos == 'true'
         env:
           VIDEO_UPLOAD_URL: ${{ secrets.VIDEO_UPLOAD_URL }}
           VIDEO_UPLOAD_TOKEN: ${{ secrets.VIDEO_UPLOAD_TOKEN }}
