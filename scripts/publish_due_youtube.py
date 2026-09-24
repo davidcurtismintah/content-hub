@@ -7,6 +7,8 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 
+from scripts.youtube_alert import send_youtube_alert
+
 
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
@@ -228,13 +230,72 @@ def main():
             published += 1
 
         except Exception as error:
-            error_message = str(error)
-
+            error_message = str(
+                error.message
+                if hasattr(error, "message")
+                else error
+            ).strip()
+            
             print(
                 f"Failed to publish {video_id}: "
                 f"{error_message}"
             )
 
+            previous_error = str(
+                row[8] or ""
+            ).strip()            
+
+            if error_message != previous_error:
+            
+                scheduled_time = (
+                    f"{publication_date} {publication_time}"
+                )
+            
+                subject = (
+                    "🚨 Content Hub YouTube Publication Failed"
+                )
+            
+                message = (
+                    "A scheduled YouTube publication failed.\n\n"
+                    f"Content ID: {content_id}\n"
+                    f"Destination: {destination_id}\n"
+                    f"Scheduled time: {scheduled_time}\n\n"
+                    "Error:\n"
+                    f"{error_message}\n\n"
+                    "Content Hub will retry the publication "
+                    "on the next scheduler run.\n\n"
+                    "Check GitHub Actions and the PUBLICATIONS "
+                    "sheet for details."
+                )
+            
+                try:
+                    send_youtube_alert(
+                        subject,
+                        message,
+                    )
+            
+                    print(
+                        "YouTube failure alert sent."
+                    )
+            
+                except Exception as alert_error:
+            
+                    print(
+                        "WARNING: Could not send "
+                        "YouTube failure alert:"
+                    )
+            
+                    print(
+                        str(alert_error)
+                    )
+            
+            else:
+            
+                print(
+                    "Same YouTube error already reported. "
+                    "Duplicate alert suppressed."
+                )
+            
             update_publication(
                 sheets,
                 index,
