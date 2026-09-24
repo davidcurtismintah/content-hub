@@ -3,65 +3,56 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from google.oauth2 import service_account
 
 
-def get_google_credentials():
-    credentials_json = os.environ[
-        "GOOGLE_SERVICE_ACCOUNT_JSON"
-    ]
+SCOPES = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube.force-ssl",
+]
 
-    return service_account.Credentials.from_service_account_info(
-        json.loads(credentials_json),
-        scopes=[
-            "https://www.googleapis.com/auth/spreadsheets",
-        ],
-    )
-
-
-def get_services():
-    credentials = get_google_credentials()
-
-    sheets = build(
-        "sheets",
-        "v4",
-        credentials=credentials,
-    )
-
-    return sheets
+GHANA_TZ = ZoneInfo("Africa/Accra")
 
 
 def get_youtube_service():
-    from google.auth.transport.requests import Request
-    from google.oauth2.credentials import Credentials
-
-    client_id = os.environ["YOUTUBE_CLIENT_ID"]
-    client_secret = os.environ["YOUTUBE_CLIENT_SECRET"]
-    refresh_token = os.environ["YOUTUBE_REFRESH_TOKEN"]
-
     credentials = Credentials(
         token=None,
-        refresh_token=refresh_token,
+        refresh_token=os.environ["YOUTUBE_REFRESH_TOKEN"],
         token_uri="https://oauth2.googleapis.com/token",
-        client_id=client_id,
-        client_secret=client_secret,
-        scopes=[
-            "https://www.googleapis.com/auth/youtube.upload",
-            "https://www.googleapis.com/auth/youtube.force-ssl",
-        ],
+        client_id=os.environ["YOUTUBE_CLIENT_ID"],
+        client_secret=os.environ["YOUTUBE_CLIENT_SECRET"],
+        scopes=SCOPES,
     )
-
-    credentials.refresh(Request())
 
     return build(
         "youtube",
         "v3",
         credentials=credentials,
+        cache_discovery=False,
     )
 
 
-def get_publications(sheets, spreadsheet_id):
+def get_sheets_service():
+    credentials = service_account.Credentials.from_service_account_info(
+        json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]),
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+        ],
+    )
+
+    return build(
+        "sheets",
+        "v4",
+        credentials=credentials,
+        cache_discovery=False,
+    )
+
+
+def get_publications(sheets):
+    spreadsheet_id = os.environ["CONTENT_SPREADSHEET_ID"]
+
     result = sheets.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id,
         range="PUBLICATIONS!A:K",
@@ -70,104 +61,99 @@ def get_publications(sheets, spreadsheet_id):
     return result.get("values", [])
 
 
-def update_status(
+def update_publication(
     sheets,
-    spreadsheet_id,
     row_number,
+    status,
+    video_id,
+    error="",
 ):
+    spreadsheet_id = os.environ["CONTENT_SPREADSHEET_ID"]
+
     sheets.spreadsheets().values().update(
         spreadsheetId=spreadsheet_id,
         range=f"PUBLICATIONS!G{row_number}:I{row_number}",
         valueInputOption="RAW",
         body={
             "values": [[
-                "PUBLISHED",
-                "",
-                "",
+                status,
+                video_id,
+                error,
             ]]
         },
     ).execute()
 
 
-def make_public(youtube, video_id):
-    response = youtube.videos().update(
+def parse_due_datetime(date_value, time_value):
+    if not date_value:
+        return None
+
+    if time_value:
+        value = f"{date_value} {time_value}"
+        return datetime.strptime(
+            value,
+            "%Y-%m-%d %H:%M",
+        ).replace(tzinfo=GHANA_TZ)
+
+    return datetime.strptime(
+        date_value,
+        "%Y-%m-%d",
+    ).replace(tzinfo=GHANA_TZ)
+
+
+def verify_public(youtube, video_id):
+    result = youtube.videos().list(
         part="status",
-        body={
-            "id": video_id,
-            "status": {
-                "privacyStatus": "public",
-            },
-        },
+        id=video_id,
     ).execute()
 
-    return response
+    items = result.get("items", [])
+
+    if not items:
+        return False, "YouTube video was not found."
+
+    privacy_status = (
+        items[0]
+        .get("status", {})
+        .get("privacyStatus", "")
+    )
+
+    if privacy_status != "public":
+        return (
+            False,
+            f"YouTube privacy status is '{privacy_status}', not 'public'."
+        )
+
+    return True, ""
 
 
 def main():
-    print(
-        "Checking for YouTube videos "
-        "ready to publish..."
-    )
-
-    spreadsheet_id = os.environ[
-        "CONTENT_SPREADSHEET_ID"
-    ]
-
-    sheets = get_services()
+    print("Checking for YouTube videos ready to publish...")
 
     youtube = get_youtube_service()
+    sheets = get_sheets_service()
 
-    publications = get_publications(
-        sheets,
-        spreadsheet_id,
-    )
+    publications = get_publications(sheets)
 
     if len(publications) < 2:
-        print("No publications found.")
+        print("No publication records.")
         return
 
-    headers = publications[0]
-
-    header_map = {
-        header.strip(): index
-        for index, header in enumerate(headers)
-    }
-
-    timezone_name = "Africa/Accra"
-
-    timezone = ZoneInfo(timezone_name)
-
-    now = datetime.now(timezone)
+    now = datetime.now(GHANA_TZ)
 
     published = 0
 
-    for row_number, raw_row in enumerate(
-        publications[1:],
-        start=2,
-    ):
-        row = raw_row + [""] * (
-            len(headers) - len(raw_row)
-        )
+    for index, row in enumerate(publications[1:], start=2):
 
-        destination_id = str(
-            row[header_map["DESTINATION ID"]]
-        ).strip()
+        if len(row) < 9:
+            continue
 
-        status = str(
-            row[header_map["STATUS"]]
-        ).strip()
-
-        video_id = str(
-            row[header_map["PLATFORM POST ID"]]
-        ).strip()
-
-        date_string = str(
-            row[header_map["DATE"]]
-        ).strip()
-
-        time_string = str(
-            row[header_map["TIME"]]
-        ).strip()
+        content_id = str(row[0]).strip()
+        destination_id = str(row[1]).strip()
+        date_value = str(row[2]).strip()
+        time_value = str(row[3]).strip()
+        status = str(row[6]).strip()
+        video_id = str(row[7]).strip()
 
         if destination_id != "YT-01":
             continue
@@ -178,71 +164,87 @@ def main():
         if not video_id:
             continue
 
-        if not date_string or not time_string:
+        due_time = parse_due_datetime(
+            date_value,
+            time_value,
+        )
+
+        if not due_time:
             continue
 
-        try:
-            scheduled_time = datetime.strptime(
-                f"{date_string} {time_string}",
-                "%Y-%m-%d %H:%M",
-            ).replace(
-                tzinfo=timezone
-            )
-
-        except ValueError:
-            print(
-                f"Invalid date/time on row "
-                f"{row_number}"
-            )
+        if due_time > now:
             continue
 
-        if now < scheduled_time:
-            continue
-
-        print()
         print(
             f"Publishing YouTube video: "
-            f"{video_id}"
+            f"{video_id} "
+            f"for {content_id}"
         )
 
         try:
-            make_public(
+            youtube.videos().update(
+                part="status",
+                body={
+                    "id": video_id,
+                    "status": {
+                        "privacyStatus": "public",
+                    },
+                },
+            ).execute()
+
+            verified, verification_error = verify_public(
                 youtube,
                 video_id,
             )
 
-            sheets.spreadsheets().values().update(
-                spreadsheetId=spreadsheet_id,
-                range=(
-                    f"PUBLICATIONS!G"
-                    f"{row_number}:I"
-                    f"{row_number}"
-                ),
-                valueInputOption="RAW",
-                body={
-                    "values": [[
-                        "PUBLISHED",
-                        video_id,
-                        "",
-                    ]]
-                },
-            ).execute()
+            if not verified:
+                print(
+                    "Publication verification failed: "
+                    + verification_error
+                )
+
+                update_publication(
+                    sheets,
+                    index,
+                    "UPLOADED",
+                    video_id,
+                    verification_error,
+                )
+
+                continue
+
+            update_publication(
+                sheets,
+                index,
+                "PUBLISHED",
+                video_id,
+                "",
+            )
+
+            print(
+                f"Published and verified: {video_id}"
+            )
 
             published += 1
 
-            print(
-                f"Published: {video_id}"
-            )
-
         except Exception as error:
+            error_message = str(error)
+
             print(
-                f"Failed to publish "
-                f"{video_id}: {error}"
+                f"Failed to publish {video_id}: "
+                f"{error_message}"
             )
 
-    print()
+            update_publication(
+                sheets,
+                index,
+                "UPLOADED",
+                video_id,
+                error_message,
+            )
+
     print(
-        f"Videos published: {published}"
+        f"Videos published and verified: {published}"
     )
 
 
