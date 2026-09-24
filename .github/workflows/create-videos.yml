@@ -83,5 +83,7 @@ jobs:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          HEALTH_ALERT_URL: ${{ secrets.HEALTH_ALERT_URL }}
+          HEALTH_ALERT_TOKEN: ${{ secrets.HEALTH_ALERT_TOKEN }}
         run: |
           python scripts/publish_due_youtube.py
