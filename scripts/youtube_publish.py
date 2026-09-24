@@ -9,6 +9,8 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
+from scripts.youtube_alert import send_youtube_alert
+
 
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
@@ -603,7 +605,15 @@ def main():
                 break
 
         except Exception as error:
-            error_message = str(error)
+            previous_error = str(
+                row[8] or ""
+            ).strip()
+            
+            error_message = str(
+                error.message
+                if hasattr(error, "message")
+                else error
+            ).strip()
 
             print(
                 "YouTube publishing failed "
@@ -621,6 +631,52 @@ def main():
                 "",
                 "",
             )
+
+            if error_message != previous_error:
+            
+                subject = (
+                    "🚨 Content Hub YouTube Upload Failed"
+                )
+            
+                message = (
+                    "A video failed during the YouTube upload stage.\n\n"
+                    f"Content ID: {content_id}\n"
+                    f"Destination: {destination_id}\n\n"
+                    "Error:\n"
+                    f"{error_message}\n\n"
+                    "The video was not successfully uploaded "
+                    "to YouTube.\n\n"
+                    "Check GitHub Actions and the PUBLICATIONS "
+                    "sheet for details."
+                )
+            
+                try:
+                    send_youtube_alert(
+                        subject,
+                        message,
+                    )
+            
+                    print(
+                        "YouTube upload failure alert sent."
+                    )
+            
+                except Exception as alert_error:
+            
+                    print(
+                        "WARNING: Could not send "
+                        "YouTube upload failure alert:"
+                    )
+            
+                    print(
+                        str(alert_error)
+                    )
+            
+            else:
+            
+                print(
+                    "Same YouTube upload error already reported. "
+                    "Duplicate alert suppressed."
+                )            
 
             failed += 1
 
