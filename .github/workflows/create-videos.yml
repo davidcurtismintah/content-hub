@@ -3,6 +3,9 @@ name: Create Videos
 on:
   workflow_dispatch:
 
+  schedule:
+    - cron: "*/5 * * * *"
+
 jobs:
   create-videos:
     runs-on: ubuntu-latest
