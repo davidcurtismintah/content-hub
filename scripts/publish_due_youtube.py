@@ -297,6 +297,14 @@ def main():
             previous_error = str(
                 row[8] or ""
             ).strip()            
+            
+            update_publication(
+                sheets,
+                index,
+                "UPLOADED",
+                video_id,
+                error_message,
+            )
 
             if error_message != previous_error:
             
@@ -348,14 +356,7 @@ def main():
                     "Same YouTube error already reported. "
                     "Duplicate alert suppressed."
                 )
-            
-            update_publication(
-                sheets,
-                index,
-                "UPLOADED",
-                video_id,
-                error_message,
-            )
+
 
     print(
         f"Videos published and verified: {published}"
