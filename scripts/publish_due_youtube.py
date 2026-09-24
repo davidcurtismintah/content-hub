@@ -204,7 +204,11 @@ def main():
                     "Publication verification failed: "
                     + verification_error
                 )
-
+            
+                previous_error = str(
+                    row[8] or ""
+                ).strip()
+            
                 update_publication(
                     sheets,
                     index,
@@ -212,7 +216,56 @@ def main():
                     video_id,
                     verification_error,
                 )
-
+            
+                if verification_error != previous_error:
+            
+                    subject = (
+                        "🚨 Content Hub YouTube Verification Failed"
+                    )
+            
+                    message = (
+                        "A scheduled YouTube publication "
+                        "failed verification.\n\n"
+                        f"Content ID: {content_id}\n"
+                        f"Destination: {destination_id}\n"
+                        f"Scheduled time: {date_value} {time_value}\n\n"
+                        "Error:\n"
+                        f"{verification_error}\n\n"
+                        "The video remains in UPLOADED status "
+                        "and will be checked again on the next "
+                        "scheduler run.\n\n"
+                        "Check GitHub Actions and the PUBLICATIONS "
+                        "sheet for details."
+                    )
+            
+                    try:
+                        send_youtube_alert(
+                            subject,
+                            message,
+                        )
+            
+                        print(
+                            "YouTube verification alert sent."
+                        )
+            
+                    except Exception as alert_error:
+            
+                        print(
+                            "WARNING: Could not send "
+                            "YouTube verification alert:"
+                        )
+            
+                        print(
+                            str(alert_error)
+                        )
+            
+                else:
+            
+                    print(
+                        "Same verification error already reported. "
+                        "Duplicate alert suppressed."
+                    )
+            
                 continue
 
             update_publication(
