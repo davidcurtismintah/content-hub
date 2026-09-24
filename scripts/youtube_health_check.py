@@ -36,11 +36,9 @@ def get_youtube_service():
 
 def get_sheets_service():
     credentials = service_account.Credentials.from_service_account_info(
-        json.loads(
-            os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
-        ),
+        json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]),
         scopes=[
-            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/spreadsheets"
         ],
     )
 
@@ -52,8 +50,11 @@ def get_sheets_service():
     )
 
 
-def send_health_alert(subject, message):
-
+def send_health_status(
+    state,
+    subject,
+    message,
+):
     url = os.environ["HEALTH_ALERT_URL"]
     token = os.environ["HEALTH_ALERT_TOKEN"]
 
@@ -61,6 +62,8 @@ def send_health_alert(subject, message):
         url,
         json={
             "action": "health_alert",
+            "alertType": "health",
+            "state": state,
             "token": token,
             "subject": subject,
             "message": message,
@@ -82,6 +85,8 @@ def send_health_alert(subject, message):
             + str(data)
         )
 
+    return data
+
 
 def run_health_check():
 
@@ -92,12 +97,19 @@ def run_health_check():
 
     youtube = get_youtube_service()
 
-    channel_result = youtube.channels().list(
-        part="snippet,status",
-        mine=True,
-    ).execute()
+    channel_result = (
+        youtube.channels()
+        .list(
+            part="snippet,status",
+            mine=True,
+        )
+        .execute()
+    )
 
-    channels = channel_result.get("items", [])
+    channels = channel_result.get(
+        "items",
+        []
+    )
 
     if not channels:
         raise RuntimeError(
@@ -138,10 +150,15 @@ def run_health_check():
         "CONTENT_SPREADSHEET_ID"
     ]
 
-    sheets.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id,
-        range="SETTINGS!A:B",
-    ).execute()
+    (
+        sheets.spreadsheets()
+        .values()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            range="SETTINGS!A:B",
+        )
+        .execute()
+    )
 
     print(
         "Google Sheets access: OK"
@@ -158,6 +175,51 @@ def main():
     try:
 
         run_health_check()
+
+        timestamp = datetime.now(
+            timezone.utc
+        ).strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        )
+
+        message = (
+            "Content Hub YouTube Health Check "
+            "has recovered.\n\n"
+            f"Time: {timestamp}\n\n"
+            "YouTube authentication: OK\n"
+            "Google Sheets access: OK\n\n"
+            "The YouTube automation system is "
+            "operational again."
+        )
+
+        try:
+
+            result = send_health_status(
+                "OK",
+                "✅ Content Hub YouTube Health Check RECOVERED",
+                message,
+            )
+
+            if result.get("emailSent"):
+                print(
+                    "Recovery email sent."
+                )
+            else:
+                print(
+                    "Health status OK. "
+                    "No recovery email needed."
+                )
+
+        except Exception as alert_error:
+
+            print(
+                "WARNING: Could not update "
+                "health alert state:"
+            )
+
+            print(
+                str(alert_error)
+            )
 
         return 0
 
@@ -194,19 +256,27 @@ def main():
             f"Time: {timestamp}\n\n"
             "Problem:\n"
             f"{error_message}\n\n"
-            "Check the GitHub Actions log for details."
+            "The system will check again in "
+            "approximately 5 minutes."
         )
 
         try:
 
-            send_health_alert(
+            result = send_health_status(
+                "FAILED",
                 subject,
-                message
+                message,
             )
 
-            print(
-                "Health alert email sent."
-            )
+            if result.get("emailSent"):
+                print(
+                    "Health alert email sent."
+                )
+            else:
+                print(
+                    "Health failure already reported. "
+                    "Duplicate alert suppressed."
+                )
 
         except Exception as alert_error:
 
