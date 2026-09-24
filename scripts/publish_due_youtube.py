@@ -7,7 +7,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 
-from scripts.youtube_alert import send_youtube_alert
+from youtube_alert import send_youtube_alert
 
 
 SCOPES = [
