@@ -248,7 +248,7 @@ def main():
             if error_message != previous_error:
             
                 scheduled_time = (
-                    f"{publication_date} {publication_time}"
+                    f"{date_value} {time_value}"
                 )
             
                 subject = (
