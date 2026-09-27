@@ -66,6 +66,7 @@ def main():
         ).decode("ascii")
 
         payload = {
+            "action": "upload_video",
             "token": upload_token,
             "contentId": content_id,
             "fileName": video_file.name,
