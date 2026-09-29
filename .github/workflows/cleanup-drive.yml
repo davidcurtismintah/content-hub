@@ -3,7 +3,7 @@ name: Drive Cleanup
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 3 * * *"
+    - cron: "17 3 * * *"
 
 jobs:
   cleanup:
