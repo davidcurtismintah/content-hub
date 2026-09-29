@@ -476,6 +476,29 @@ def main():
             skipped += 1
             continue
 
+        # A saved video ID means the upload already succeeded. Never upload
+        # that row again; only retry a missing standard comment if needed.
+        if status == "UPLOADED" and platform_post_id:
+            comment_status = str(row[header_map["COMMENT STATUS"]]).strip()
+            comment_id = str(row[header_map["COMMENT ID"]]).strip()
+            if standard_comment and not comment_id and comment_status != "CREATED":
+                try:
+                    new_comment_id = create_comment(youtube, platform_post_id, standard_comment)
+                    update_publication_row(
+                        sheets, spreadsheet_id, row_number, "UPLOADED",
+                        platform_post_id, "", new_comment_id, "CREATED"
+                    )
+                    print(f"Retried standard comment for {content_id} successfully.")
+                except Exception as comment_error:
+                    update_publication_row(
+                        sheets, spreadsheet_id, row_number, "UPLOADED",
+                        platform_post_id, "Comment error: " + str(comment_error), "", "ERROR"
+                    )
+                    print(f"Comment retry failed for {content_id}: {comment_error}")
+            else:
+                skipped += 1
+            continue
+
         if status != "READY":
             skipped += 1
             continue
@@ -508,6 +531,7 @@ def main():
             skipped += 1
             continue
 
+        video_id = ""
         try:
             video_path = (
                 videos_dir
@@ -555,41 +579,27 @@ def main():
                 f"{video_id}"
             )
 
-            new_comment_id = ""
-            new_comment_status = ""
+            # Persist the YouTube ID immediately. If comment creation fails,
+            # the next run sees UPLOADED + platform ID and will not re-upload.
+            update_publication_row(
+                sheets, spreadsheet_id, row_number, "UPLOADED",
+                video_id, "", "", ("PENDING" if standard_comment else "NOT_REQUIRED")
+            )
 
             if standard_comment:
                 try:
-                    new_comment_id = create_comment(
-                        youtube,
-                        video_id,
-                        standard_comment,
+                    new_comment_id = create_comment(youtube, video_id, standard_comment)
+                    update_publication_row(
+                        sheets, spreadsheet_id, row_number, "UPLOADED",
+                        video_id, "", new_comment_id, "CREATED"
                     )
-
-                    new_comment_status = "CREATED"
-
-                    print(
-                        "Standard comment created."
-                    )
-
+                    print("Standard comment created.")
                 except Exception as comment_error:
-                    new_comment_status = "ERROR"
-
-                    print(
-                        "Comment creation failed: "
-                        + str(comment_error)
+                    update_publication_row(
+                        sheets, spreadsheet_id, row_number, "UPLOADED",
+                        video_id, "Comment error: " + str(comment_error), "", "ERROR"
                     )
-
-            update_publication_row(
-                sheets,
-                spreadsheet_id,
-                row_number,
-                "UPLOADED",
-                video_id,
-                "",
-                new_comment_id,
-                new_comment_status,
-            )
+                    print("Comment creation failed: " + str(comment_error))
 
             processed += 1
 
@@ -621,16 +631,21 @@ def main():
                 f"{error_message}"
             )
 
-            update_publication_row(
-                sheets,
-                spreadsheet_id,
-                row_number,
-                "YOUTUBE_ERROR",
-                "",
-                error_message,
-                "",
-                "",
-            )
+            if video_id:
+                # The upload succeeded; preserve its ID even if a later
+                # Sheets/comment operation failed. Never mark it retryable as READY.
+                try:
+                    update_publication_row(
+                        sheets, spreadsheet_id, row_number, "UPLOADED",
+                        video_id, error_message, "", "ERROR"
+                    )
+                except Exception as persist_error:
+                    print("CRITICAL: could not persist uploaded video ID: " + str(persist_error))
+            else:
+                update_publication_row(
+                    sheets, spreadsheet_id, row_number, "YOUTUBE_ERROR",
+                    "", error_message, "", ""
+                )
 
             if error_message != previous_error:
             
