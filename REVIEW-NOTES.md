@@ -15,7 +15,7 @@
 1. **Apply the Apps Script patch in the actual Apps Script project**, then run `createGitHubVideoTrigger()` once to remove any old 5-minute Apps Script trigger. Do not create that trigger again. GitHub Actions owns the scheduled workflow.
 2. Added a shared Apps Script lock around `scanInbox`, `processOCR`, `processAI`, and `createPublicationQueue`. The lock prevents these trigger handlers from mutating the shared queue concurrently; each wrapper skips quickly if another handler owns the lock. A stale `AI_PROCESSING` row is eligible for retry on the next run.
 3. Rewrote publication scheduling to use `PUBLISH_TIMEZONE`, skip occupied date/time slots, and enforce `PUBLISH_MAX_POSTS_PER_DAY` against existing scheduled content per calendar day. It appends rows in one batch. Review existing historic rows before relying on its daily counts.
-4. YouTube publisher now commits `UPLOADED` + video ID before attempting the standard comment, and retries a missing comment without re-uploading. A narrow crash window remains if YouTube accepts the upload but the immediate Sheets write itself fails; this cannot be fully eliminated without a separate reconciliation strategy that searches the channel for the just-uploaded video.
+4. YouTube publisher commits `UPLOADED` + video ID before attempting the standard comment, and retries a missing comment without re-uploading. New uploads carry a stable `contenthub_<CONTENT_ID>` YouTube tag. Before uploading a `READY` row, the publisher scans up to 150 recent channel uploads for that tag and restores the video ID to Sheets if it finds a match. This substantially closes the lost-Sheets-write crash window. It cannot recover an untagged legacy upload, or one that has fallen outside the 150 most recent uploads; those require manual reconciliation. The check also fails closed: if it cannot inspect the channel, it will not risk uploading a duplicate.
 5. **Gemini retry policy is reduced but not fully redesigned.** Apps Script still makes three Gemini calls per item and retries transient errors. If calls are slow, keep batch sizes low and monitor execution duration.
 6. **Drive upload idempotency uses the filename.** Ensure generated MP4 names remain deterministic as `<CONTENT_ID>.mp4`; if multiple same-named files already exist, the current patch reuses the first match.
 7. **Google Sheets export is a snapshot, not a live connection.** The proposed workbook is for review/import only. It does not update the live Google Sheet automatically.
@@ -34,6 +34,7 @@
 - All four workflow YAML files parse successfully.
 - Patched Apps Script passes Node JavaScript syntax checking (checked as a `.js` source file).
 - No live Google APIs, YouTube upload, Drive deletion, or Apps Script deployment was performed in this environment.
+- Added YouTube upload reconciliation by stable per-content tag; Python syntax was rechecked after the change.
 
 ## Apply carefully
 
