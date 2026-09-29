@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
@@ -27,6 +28,8 @@ def get_youtube_service():
         client_secret=os.environ["YOUTUBE_CLIENT_SECRET"],
         scopes=SCOPES,
     )
+
+    credentials.refresh(Request())
 
     return build(
         "youtube",

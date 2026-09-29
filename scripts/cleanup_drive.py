@@ -5,6 +5,7 @@ import sys
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -59,6 +60,8 @@ def get_youtube_service():
         client_secret=os.environ["YOUTUBE_CLIENT_SECRET"],
         scopes=YOUTUBE_SCOPES,
     )
+
+    credentials.refresh(Request())
 
     return build(
         "youtube",
@@ -144,6 +147,11 @@ def extract_drive_file_id(value):
 
     if match:
         return match.group(1)
+
+    # CONTENT!I stores the Drive file ID directly in the current
+    # Apps Script upload flow, not a URL. Accept that form too.
+    if re.fullmatch(r"[A-Za-z0-9_-]{10,}", value):
+        return value
 
     return ""
 
