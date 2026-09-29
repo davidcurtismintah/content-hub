@@ -1,5 +1,9 @@
 name: Create Videos
 
+concurrency:
+  group: content-hub-create-videos
+  cancel-in-progress: false
+
 on:
   workflow_dispatch:
   schedule:
@@ -35,6 +39,20 @@ jobs:
           mkdir -p work/source
           mkdir -p work/output
           mkdir -p work/youtube
+
+      - name: Validate required secrets
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          CONTENT_SPREADSHEET_ID: ${{ secrets.CONTENT_SPREADSHEET_ID }}
+          VIDEO_UPLOAD_URL: ${{ secrets.VIDEO_UPLOAD_URL }}
+          VIDEO_UPLOAD_TOKEN: ${{ secrets.VIDEO_UPLOAD_TOKEN }}
+          VIDEO_FOLDER_ID: ${{ secrets.VIDEO_FOLDER_ID }}
+        run: |
+          test -n "$GOOGLE_SERVICE_ACCOUNT_JSON" || (echo "Missing GOOGLE_SERVICE_ACCOUNT_JSON" && exit 1)
+          test -n "$CONTENT_SPREADSHEET_ID" || (echo "Missing CONTENT_SPREADSHEET_ID" && exit 1)
+          test -n "$VIDEO_UPLOAD_URL" || (echo "Missing VIDEO_UPLOAD_URL" && exit 1)
+          test -n "$VIDEO_UPLOAD_TOKEN" || (echo "Missing VIDEO_UPLOAD_TOKEN" && exit 1)
+          test -n "$VIDEO_FOLDER_ID" || (echo "Missing VIDEO_FOLDER_ID" && exit 1)
 
       - name: Download AI-ready content
         env:
@@ -76,14 +94,3 @@ jobs:
         run: |
           python scripts/youtube_publish.py
 
-      - name: Publish due YouTube videos
-        env:
-          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          CONTENT_SPREADSHEET_ID: ${{ secrets.CONTENT_SPREADSHEET_ID }}
-          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-          HEALTH_ALERT_URL: ${{ secrets.HEALTH_ALERT_URL }}
-          HEALTH_ALERT_TOKEN: ${{ secrets.HEALTH_ALERT_TOKEN }}
-        run: |
-          python scripts/publish_due_youtube.py

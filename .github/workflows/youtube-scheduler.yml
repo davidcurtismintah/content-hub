@@ -1,5 +1,9 @@
 name: YouTube Scheduler
 
+concurrency:
+  group: content-hub-youtube-scheduler
+  cancel-in-progress: false
+
 on:
   workflow_dispatch:
   schedule:
