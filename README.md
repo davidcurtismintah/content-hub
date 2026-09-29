@@ -1,149 +1,127 @@
 ### Content Hub 🚀
 
-OmniContent Pipeline is an automated, end-to-end media engine that sources images from multiple content networks, converts them into engaging videos, and schedules them for publishing across major video-sharing platforms. 
+Content Hub is an automated, self-hosted content generation and scheduling pipeline. It autonomously sources trending or specified images from multiple web platforms, dynamically converts them into high-quality vertical or horizontal video formats, and handles automated cross-platform scheduling and publishing. 
 
 ### 🌟 Features
 
-* **Multi-Platform Scraping:** Automatically fetch trending or targeted images from **Reddit**, **Tumblr**, **Twitter (X)**, and **Pinterest**.
-* **Dynamic Video Engine:** Convert static images into videos complete with modern transitions, customizable aspect ratios (e.g., 9:16 Shorts/Reels), and audio tracks.
-* **Unified Publisher:** Automatically queue, manage, and schedule video uploads directly to **YouTube**, **Facebook**, **Instagram**, and **TikTok**.
-* **Intelligent Automation:** Set up cron-based workflows or configuration triggers to keep your social media channels active 24/7 without manual intervention.
+### 1. Multi-Platform Sourcing
 
-### 🛠️ Tech Stack & Dependencies
+Scrapes, authenticates, and extracts high-resolution images, metadata, and captions from: 
 
-* **Core Pipeline:** Python 3.10+ / Node.js
-* **Media Processing:** FFmpeg / MoviePy (for image-to-video rendering)
-* **Scraping Frameworks:** PRAW (Reddit), Tweepy (X), Tumblr API, Playwright / BeautifulSoup (Pinterest)
-* **API Distribution:** Google API Client (YouTube), Meta Graph API (Facebook/Instagram), TikTok Content Posting API
+* **Reddit:** Sourced via PRAW (hot/top posts from specified subreddits).
+* **Tumblr:** Filtered by tags and blogs using the Tumblr API.
+* **Twitter (X):** Sourced from bookmarked links, user timelines, or search queries.
+* **Pinterest:** Extracted from boards and user pins.
 
-### 🚀 Getting Started
+### 2. Automated Video Engine
+
+* Converts static imagery into engaging, short-form video files.
+* Supports automatic padding, zoom pan effects (Ken Burns), and resolution matching for vertical channels (9:16) or widescreen channels (16:9).
+* Overlay engines add automated voiceovers (TTS), background tracks, subtitles, and text branding.
+
+### 3. Cross-Platform Scheduling
+
+Queue, manage, and dispatch your generated videos automatically to: 
+
+* **YouTube Shorts & Longform**
+* **Facebook Reels & Posts**
+* **Instagram Reels**
+* **TikTok**
+
+### 🛠️ Architecture Overview
+
+[ Sources ] ──────────> [ Media Processing ] ──────────> [ Publishing Hub ]
+ ├─ Reddit               ├─ Image Optimization            ├─ YouTube API
+ ├─ Tumblr               ├─ FFmpeg Video Engine           ├─ Meta Graph API (FB/IG)
+ ├─ Twitter (X)          ├─ Text-To-Speech                └─ TikTok Content API
+ └─ Pinterest            └─ Subtitle Generator
+
+### 🚀 Quick Start
 
 ### Prerequisites
 
-Ensure you have the following installed on your machine: 
-
-* Python 3.10+ or Node.js LTS
-* FFmpeg (must be added to your system's PATH)
+* Python 3.10+ or Node.js 18+ (depending on your stack implementation)
+* **FFmpeg** installed on your system path
+* API Developer Accounts for all target platforms
 
 ### Installation
 
-1. **Clone the repository:** 
+1. Clone the repository: 
 
 bash
 
-git clone https://github.com/yourusername/omnicontent-pipeline.git
-cd omnicontent-pipeline
+git clone https://github.com/yourusername/content-hub.git
+cd content-hub
 
 Use code with caution.
-2. **Install dependencies:** 
+2. Install system-level dependencies (Example for Ubuntu/Debian): 
 
 bash
 
-# If using Python
-pip install -r requirements.txt
+sudo apt update && sudo apt install ffmpeg -y
 
-# If using Node.js
-npm install
+Use code with caution.
+3. Install project dependencies: 
+
+bash
+
+pip install -r requirements.txt
+# OR: npm install
 
 Use code with caution.
 
 ### Configuration
 
-1. Copy the environment template file: 
-
-bash
-
-cp .env.example .env
-
-Use code with caution.
-2. Open .env and fill in your respective API keys, tokens, and credentials: 
+Create a .env file in the root directory and populate your API credentials: 
 
 env
 
-# --- SOURCE CREDENTIALS ---
+# SOURCING CREDENTIALS
 REDDIT_CLIENT_ID=your_reddit_id
 REDDIT_CLIENT_SECRET=your_reddit_secret
-TWITTER_X_BEARER_TOKEN=your_x_token
 TUMBLR_CONSUMER_KEY=your_tumblr_key
-PINTEREST_ACCESS_TOKEN=your_pinterest_token
+TWITTER_BEARER_TOKEN=your_x_token
 
-# --- DESTINATION CREDENTIALS ---
+# PUBLISHING CREDENTIALS
 YOUTUBE_API_KEY=your_youtube_key
 META_ACCESS_TOKEN=your_facebook_instagram_token
-TIKTOK_OPEN_API_KEY=your_tiktok_key
+TIKTOK_ACCESS_TOKEN=your_tiktok_token
 
-# --- PIPELINE SETTINGS ---
-VIDEO_DURATION_SEC=15
-ASPECT_RATIO=9_16
-OUTPUT_DIR=./output
+# ENGINE CONFIG
+VIDEO_DEFAULT_DURATION=15
+OUTPUT_FORMAT=mp4
 
 Use code with caution.
 
-### 💻 Usage
+### Running the App
 
-### 1. Run the Entire Pipeline
-
-Execute the main controller script to scrape, process, and schedule content in a single run: 
+Execute the main orchestrator to start parsing sources, rendering videos, and filling the publishing queues: 
 
 bash
 
-python main.py --run-all
+python main.py --run-pipeline
 
 Use code with caution.
 
-### 2. Run Modules Individually
+### 🗓️ How Schedulers Work
 
-If you want to control separate steps of your pipeline: 
+Content Hub uses a centralized database (SQLite/PostgreSQL) to handle the video pipeline logic. 
 
-* **Scrape Images Only:** 
-
-bash
-
-python main.py --source reddit --query "infographics" --limit 10
-
-Use code with caution.
-* **Convert Images to Videos:** 
-
-bash
-
-python main.py --process-media --input ./images --audio background.mp3
-
-Use code with caution.
-* **Schedule Uploads:** 
-
-bash
-
-python main.py --schedule --platforms youtube instagram tiktok
-
-Use code with caution.
-
-### 📅 Scheduling & Queue Management
-
-The application features a built-in JSON/Database queue system. You can view, modify, or rearrange scheduled posts by editing the generated queue.json file or accessing the dashboard (if enabled). 
-
-json
-
-{
-  "post_id": "001",
-  "video_path": "./output/render_001.mp4",
-  "title": "Amazing Art Spot!",
-  "description": "#art #trending #shorts",
-  "schedule_time": "2026-10-01T15:00:00Z",
-  "status": "pending"
-}
-
-Use code with caution.
+1. **Ingest Stage:** System fetches new assets hourly and stores them in a raw cache folder.
+2. **Process Stage:** Images match target template configurations and compile into .mp4 video binaries.
+3. **Queue Stage:** System calculates local posting windows based on historical performance metrics.
+4. **Publish Stage:** Background workers periodically push ready assets via platform-specific REST endpoints.
 
 ### 🤝 Contributing
 
-Contributions are what make the open-source community such an amazing place to learn, inspire, and create. 
+Contributions make the open-source community an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**. 
 
 1. Fork the Project
 2. Create your Feature Branch (git checkout -b feature/AmazingFeature)
 3. Commit your Changes (git commit -m 'Add some AmazingFeature')
-4. Push to the Branch (git push origin feature/AmazingFeature)
+4. Push to the Branch (git checkout -b feature/AmazingFeature)
 5. Open a Pull Request
 
-### 📄 License
+### 📝 License
 
 Distributed under the MIT License. See LICENSE for more information.
