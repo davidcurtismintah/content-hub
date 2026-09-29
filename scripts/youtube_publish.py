@@ -15,6 +15,7 @@ from youtube_alert import send_youtube_alert
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.force-ssl",
+    "https://www.googleapis.com/auth/youtube.readonly",
 ]
 
 
@@ -275,18 +276,78 @@ def update_publication_row(
     ).execute()
 
 
+def content_marker(content_id):
+    """Stable YouTube tag used to reconcile an upload after a lost Sheets write."""
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "", str(content_id))
+    if not safe_id:
+        raise ValueError("Invalid content ID for YouTube reconciliation.")
+    return f"contenthub_{safe_id}"[:500]
+
+
+def find_existing_upload(youtube, content_id, max_pages=3):
+    """Search the channel's recent uploads for this content's stable marker tag.
+
+    This recovers the common failure window where YouTube accepted an upload but
+    the runner died before the video ID was saved to Google Sheets. It searches
+    up to 150 recent uploads; it is not a guarantee for older videos.
+    """
+    marker = content_marker(content_id)
+    channel_response = youtube.channels().list(
+        part="contentDetails",
+        mine=True,
+    ).execute()
+    channels = channel_response.get("items", [])
+    if not channels:
+        raise RuntimeError("Could not identify the authenticated YouTube channel.")
+    uploads_playlist = (
+        channels[0].get("contentDetails", {})
+        .get("relatedPlaylists", {}).get("uploads")
+    )
+    if not uploads_playlist:
+        raise RuntimeError("Authenticated YouTube channel has no uploads playlist.")
+
+    page_token = None
+    for _ in range(max_pages):
+        page = youtube.playlistItems().list(
+            part="contentDetails",
+            playlistId=uploads_playlist,
+            maxResults=50,
+            pageToken=page_token,
+        ).execute()
+        video_ids = [
+            item.get("contentDetails", {}).get("videoId")
+            for item in page.get("items", [])
+        ]
+        video_ids = [video_id for video_id in video_ids if video_id]
+        if video_ids:
+            details = youtube.videos().list(
+                part="snippet",
+                id=",".join(video_ids),
+            ).execute()
+            for item in details.get("items", []):
+                tags = item.get("snippet", {}).get("tags", [])
+                if marker in tags:
+                    return item.get("id", "")
+        page_token = page.get("nextPageToken")
+        if not page_token:
+            break
+    return ""
+
+
 def upload_video(
     youtube,
     video_path,
     title,
     description,
     category_id,
+    content_id,
 ):
     body = {
         "snippet": {
             "title": title,
             "description": description,
             "categoryId": category_id,
+            "tags": [content_marker(content_id)],
         },
 
         "status": {
@@ -519,6 +580,54 @@ def main():
             skipped += 1
             continue
 
+        # Reconcile a previous successful upload before attempting another.
+        # The stable tag is written into YouTube metadata on every new upload.
+        try:
+            recovered_video_id = find_existing_upload(youtube, content_id)
+        except Exception as reconcile_error:
+            print(
+                f"Could not check recent YouTube uploads for {content_id}: "
+                f"{reconcile_error}. Refusing to risk a duplicate upload."
+            )
+            failed += 1
+            continue
+
+        if recovered_video_id:
+            print(
+                f"Recovered existing YouTube upload for {content_id}: "
+                f"{recovered_video_id}"
+            )
+            try:
+                update_publication_row(
+                    sheets, spreadsheet_id, row_number, "UPLOADED",
+                    recovered_video_id, "", "",
+                    ("PENDING" if standard_comment else "NOT_REQUIRED")
+                )
+                if standard_comment:
+                    try:
+                        new_comment_id = create_comment(
+                            youtube, recovered_video_id, standard_comment
+                        )
+                        update_publication_row(
+                            sheets, spreadsheet_id, row_number, "UPLOADED",
+                            recovered_video_id, "", new_comment_id, "CREATED"
+                        )
+                    except Exception as comment_error:
+                        update_publication_row(
+                            sheets, spreadsheet_id, row_number, "UPLOADED",
+                            recovered_video_id,
+                            "Comment error: " + str(comment_error),
+                            "", "ERROR"
+                        )
+                processed += 1
+            except Exception as persist_error:
+                print(
+                    f"CRITICAL: could not save recovered video ID for "
+                    f"{content_id}: {persist_error}"
+                )
+                failed += 1
+            continue
+
         video_reference = content_data[
             content_id
         ]["video_file"]
@@ -570,6 +679,7 @@ def main():
                 title,
                 caption,
                 category_id,
+                content_id,
             )
 
             video_id = response["id"]
@@ -653,16 +763,20 @@ def main():
                     "🚨 Content Hub YouTube Upload Failed"
                 )
             
+                recovery_note = (
+                    "The video may have uploaded; the next run will search "
+                    "recent channel uploads for its recovery tag.\n\n"
+                    if not video_id else
+                    "The YouTube video ID was obtained; check the publication row.\n\n"
+                )
                 message = (
                     "A video failed during the YouTube upload stage.\n\n"
                     f"Content ID: {content_id}\n"
                     f"Destination: {destination_id}\n\n"
                     "Error:\n"
                     f"{error_message}\n\n"
-                    "The video was not successfully uploaded "
-                    "to YouTube.\n\n"
-                    "Check GitHub Actions and the PUBLICATIONS "
-                    "sheet for details."
+                    + recovery_note
+                    + "Check GitHub Actions and the PUBLICATIONS sheet for details."
                 )
             
                 try:
