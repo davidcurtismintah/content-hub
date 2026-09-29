@@ -13,9 +13,9 @@
 ## Important remaining items before production
 
 1. **Apply the Apps Script patch in the actual Apps Script project**, then run `createGitHubVideoTrigger()` once to remove any old 5-minute Apps Script trigger. Do not create that trigger again. GitHub Actions owns the scheduled workflow.
-2. **Apps Script locking is not yet comprehensive.** `scanInbox`, `processOCR`, `processAI`, and `createPublicationQueue` still need a coordinated lock/idempotency pass to prevent overlapping trigger executions.
-3. **Publication queue scheduling needs a full rewrite** to account for existing scheduled slots and the real per-calendar-day cap. The current function only limits items it creates in a single execution. It also uses the Apps Script project timezone, not the `PUBLISH_TIMEZONE` setting. Set the Apps Script project timezone to `Africa/Accra` as a stopgap; this does not implement the full queue rewrite.
-4. **YouTube upload crash window remains:** if YouTube accepts an upload but the Sheets update fails before the video ID is persisted, a later run can upload a duplicate. The comment is still created before the `UPLOADED` row is committed in the current Python script. A robust recovery design should persist the YouTube ID immediately after upload, then create/update the comment independently.
+2. Added a shared Apps Script lock around `scanInbox`, `processOCR`, `processAI`, and `createPublicationQueue`. The lock prevents these trigger handlers from mutating the shared queue concurrently; each wrapper skips quickly if another handler owns the lock. A stale `AI_PROCESSING` row is eligible for retry on the next run.
+3. Rewrote publication scheduling to use `PUBLISH_TIMEZONE`, skip occupied date/time slots, and enforce `PUBLISH_MAX_POSTS_PER_DAY` against existing scheduled content per calendar day. It appends rows in one batch. Review existing historic rows before relying on its daily counts.
+4. YouTube publisher now commits `UPLOADED` + video ID before attempting the standard comment, and retries a missing comment without re-uploading. A narrow crash window remains if YouTube accepts the upload but the immediate Sheets write itself fails; this cannot be fully eliminated without a separate reconciliation strategy that searches the channel for the just-uploaded video.
 5. **Gemini retry policy is reduced but not fully redesigned.** Apps Script still makes three Gemini calls per item and retries transient errors. If calls are slow, keep batch sizes low and monitor execution duration.
 6. **Drive upload idempotency uses the filename.** Ensure generated MP4 names remain deterministic as `<CONTENT_ID>.mp4`; if multiple same-named files already exist, the current patch reuses the first match.
 7. **Google Sheets export is a snapshot, not a live connection.** The proposed workbook is for review/import only. It does not update the live Google Sheet automatically.
@@ -32,5 +32,12 @@
 
 - Python files compile with `python -m compileall`.
 - All four workflow YAML files parse successfully.
-- Patched Apps Script passes Node JavaScript syntax checking.
+- Patched Apps Script passes Node JavaScript syntax checking (checked as a `.js` source file).
 - No live Google APIs, YouTube upload, Drive deletion, or Apps Script deployment was performed in this environment.
+
+## Apply carefully
+
+- Replace the Apps Script project code with `apps-script/Content-Hub-Connector.gs` (or use the separately supplied `.gs` file), save, then inspect triggers. Keep only one trigger each for `scanInbox`, `processOCR`, `processAI`, and `createPublicationQueue`; do not create a timer trigger for `triggerGitHubVideoWorkflow`.
+- Verify `PUBLISH_TIMEZONE` is `Africa/Accra`. The queue code now reads that setting.
+- Do not import the proposed workbook over the live spreadsheet without reviewing historical rows. The proposed workbook is a review copy, not a live sync.
+- Before production, test the queue on a duplicate/test spreadsheet with dates and times covering: occupied slots, a full daily cap, a past start time, and a slot crossing midnight.
