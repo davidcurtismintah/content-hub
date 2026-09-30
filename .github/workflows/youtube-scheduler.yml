@@ -27,6 +27,18 @@ jobs:
         run: |
           pip install google-api-python-client google-auth google-auth-oauthlib requests
 
+      - name: Upload READY YouTube videos
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          CONTENT_SPREADSHEET_ID: ${{ secrets.CONTENT_SPREADSHEET_ID }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          HEALTH_ALERT_URL: ${{ secrets.HEALTH_ALERT_URL }}
+          HEALTH_ALERT_TOKEN: ${{ secrets.HEALTH_ALERT_TOKEN }}
+        run: |
+          python scripts/youtube_publish.py
+
       - name: Publish due YouTube videos
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
