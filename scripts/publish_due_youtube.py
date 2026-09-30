@@ -16,8 +16,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/youtube.force-ssl",
 ]
 
-GHANA_TZ = ZoneInfo("Africa/Accra")
-
 
 def get_youtube_service():
     credentials = Credentials(
@@ -55,6 +53,59 @@ def get_sheets_service():
     )
 
 
+def get_settings(sheets):
+    spreadsheet_id = os.environ["CONTENT_SPREADSHEET_ID"]
+
+    result = sheets.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id,
+        range="SETTINGS!A:B",
+    ).execute()
+
+    values = result.get("values", [])
+
+    settings = {}
+
+    for row in values[1:]:
+        if not row:
+            continue
+
+        key = str(row[0]).strip()
+
+        if not key:
+            continue
+
+        value = (
+            str(row[1]).strip()
+            if len(row) > 1
+            else ""
+        )
+
+        settings[key] = value
+
+    return settings
+
+
+def get_publication_timezone(sheets):
+    settings = get_settings(sheets)
+
+    timezone_name = str(
+        settings.get("PUBLISH_TIMEZONE", "")
+    ).strip()
+
+    if not timezone_name:
+        raise ValueError(
+            "PUBLISH_TIMEZONE is not configured in SETTINGS."
+        )
+
+    try:
+        return ZoneInfo(timezone_name)
+    except Exception as error:
+        raise ValueError(
+            "Invalid PUBLISH_TIMEZONE in SETTINGS: "
+            f"{timezone_name}"
+        ) from error
+
+
 def get_publications(sheets):
     spreadsheet_id = os.environ["CONTENT_SPREADSHEET_ID"]
 
@@ -89,21 +140,30 @@ def update_publication(
     ).execute()
 
 
-def parse_due_datetime(date_value, time_value):
+def parse_due_datetime(
+    date_value,
+    time_value,
+    publication_timezone,
+):
     if not date_value:
         return None
 
     if time_value:
         value = f"{date_value} {time_value}"
+
         return datetime.strptime(
             value,
             "%Y-%m-%d %H:%M",
-        ).replace(tzinfo=GHANA_TZ)
+        ).replace(
+            tzinfo=publication_timezone
+        )
 
     return datetime.strptime(
         date_value,
         "%Y-%m-%d",
-    ).replace(tzinfo=GHANA_TZ)
+    ).replace(
+        tzinfo=publication_timezone
+    )
 
 
 def verify_public(youtube, video_id):
@@ -138,17 +198,34 @@ def main():
     youtube = get_youtube_service()
     sheets = get_sheets_service()
 
+    publication_timezone = get_publication_timezone(
+        sheets
+    )
+
+    print(
+        "Publication timezone: "
+        f"{publication_timezone.key}"
+    )
+
     publications = get_publications(sheets)
 
     if len(publications) < 2:
         print("No publication records.")
         return
 
-    now = datetime.now(GHANA_TZ)
+    now = datetime.now(publication_timezone)
+
+    print(
+        "Current publication time: "
+        f"{now.strftime('%Y-%m-%d %H:%M:%S %Z')}"
+    )
 
     published = 0
 
-    for index, row in enumerate(publications[1:], start=2):
+    for index, row in enumerate(
+        publications[1:],
+        start=2,
+    ):
 
         if len(row) < 9:
             continue
@@ -172,6 +249,7 @@ def main():
         due_time = parse_due_datetime(
             date_value,
             time_value,
+            publication_timezone,
         )
 
         if not due_time:
@@ -180,10 +258,16 @@ def main():
         if due_time > now:
             continue
 
+        scheduled_time = (
+            f"{date_value} {time_value}"
+        )
+
         print(
             f"Publishing YouTube video: "
             f"{video_id} "
-            f"for {content_id}"
+            f"for {content_id} "
+            f"scheduled for {scheduled_time} "
+            f"({publication_timezone.key})"
         )
 
         try:
@@ -207,11 +291,11 @@ def main():
                     "Publication verification failed: "
                     + verification_error
                 )
-            
+
                 previous_error = str(
                     row[8] or ""
                 ).strip()
-            
+
                 update_publication(
                     sheets,
                     index,
@@ -219,19 +303,21 @@ def main():
                     video_id,
                     verification_error,
                 )
-            
+
                 if verification_error != previous_error:
-            
+
                     subject = (
                         "🚨 Content Hub YouTube Verification Failed"
                     )
-            
+
                     message = (
                         "A scheduled YouTube publication "
                         "failed verification.\n\n"
                         f"Content ID: {content_id}\n"
                         f"Destination: {destination_id}\n"
-                        f"Scheduled time: {date_value} {time_value}\n\n"
+                        f"Scheduled time: "
+                        f"{scheduled_time} "
+                        f"({publication_timezone.key})\n\n"
                         "Error:\n"
                         f"{verification_error}\n\n"
                         "The video remains in UPLOADED status "
@@ -240,35 +326,35 @@ def main():
                         "Check GitHub Actions and the PUBLICATIONS "
                         "sheet for details."
                     )
-            
+
                     try:
                         send_youtube_alert(
                             subject,
                             message,
                         )
-            
+
                         print(
                             "YouTube verification alert sent."
                         )
-            
+
                     except Exception as alert_error:
-            
+
                         print(
                             "WARNING: Could not send "
                             "YouTube verification alert:"
                         )
-            
+
                         print(
                             str(alert_error)
                         )
-            
+
                 else:
-            
+
                     print(
                         "Same verification error already reported. "
                         "Duplicate alert suppressed."
                     )
-            
+
                 continue
 
             update_publication(
@@ -291,7 +377,7 @@ def main():
                 if hasattr(error, "message")
                 else error
             ).strip()
-            
+
             print(
                 f"Failed to publish {video_id}: "
                 f"{error_message}"
@@ -299,8 +385,8 @@ def main():
 
             previous_error = str(
                 row[8] or ""
-            ).strip()            
-            
+            ).strip()
+
             update_publication(
                 sheets,
                 index,
@@ -310,20 +396,18 @@ def main():
             )
 
             if error_message != previous_error:
-            
-                scheduled_time = (
-                    f"{date_value} {time_value}"
-                )
-            
+
                 subject = (
                     "🚨 Content Hub YouTube Publication Failed"
                 )
-            
+
                 message = (
                     "A scheduled YouTube publication failed.\n\n"
                     f"Content ID: {content_id}\n"
                     f"Destination: {destination_id}\n"
-                    f"Scheduled time: {scheduled_time}\n\n"
+                    f"Scheduled time: "
+                    f"{scheduled_time} "
+                    f"({publication_timezone.key})\n\n"
                     "Error:\n"
                     f"{error_message}\n\n"
                     "Content Hub will retry the publication "
@@ -331,35 +415,34 @@ def main():
                     "Check GitHub Actions and the PUBLICATIONS "
                     "sheet for details."
                 )
-            
+
                 try:
                     send_youtube_alert(
                         subject,
                         message,
                     )
-            
+
                     print(
                         "YouTube failure alert sent."
                     )
-            
+
                 except Exception as alert_error:
-            
+
                     print(
                         "WARNING: Could not send "
                         "YouTube failure alert:"
                     )
-            
+
                     print(
                         str(alert_error)
                     )
-            
+
             else:
-            
+
                 print(
                     "Same YouTube error already reported. "
                     "Duplicate alert suppressed."
                 )
-
 
     print(
         f"Videos published and verified: {published}"
