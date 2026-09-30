@@ -10,6 +10,10 @@ from google.oauth2 import service_account
 
 from youtube_alert import send_youtube_alert
 
+import time
+
+VERIFICATION_ATTEMPTS = 7
+VERIFICATION_INTERVAL_SECONDS = 10
 
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
@@ -192,6 +196,43 @@ def verify_public(youtube, video_id):
     return True, ""
 
 
+def verify_public_with_retry(youtube, video_id):
+    last_error = "YouTube did not confirm public status."
+
+    for attempt in range(1, VERIFICATION_ATTEMPTS + 1):
+        try:
+            verified, error_message = verify_public(
+                youtube,
+                video_id,
+            )
+
+            if verified:
+                return True, ""
+
+            last_error = error_message
+
+        except Exception as error:
+            last_error = str(
+                getattr(error, "message", error)
+            ).strip()
+
+        if attempt < VERIFICATION_ATTEMPTS:
+            print(
+                f"Verification check {attempt}/"
+                f"{VERIFICATION_ATTEMPTS} did not confirm "
+                "public status. Retrying in "
+                f"{VERIFICATION_INTERVAL_SECONDS} seconds."
+            )
+            time.sleep(VERIFICATION_INTERVAL_SECONDS)
+
+    return (
+        False,
+        "YouTube did not confirm public status after "
+        f"{VERIFICATION_ATTEMPTS} checks. "
+        f"Last result: {last_error}",
+    )
+
+
 def main():
     print("Checking for YouTube videos ready to publish...")
 
@@ -281,7 +322,7 @@ def main():
                 },
             ).execute()
 
-            verified, verification_error = verify_public(
+            verified, verification_error = verify_public_with_retry(
                 youtube,
                 video_id,
             )
